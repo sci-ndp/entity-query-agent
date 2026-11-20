@@ -12,6 +12,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LLMProvider = Literal["ollama", "lmstudio", "openrouter", "openllm", "openai_compatible"]
 LLMApiStyle = Literal["anthropic", "openai"]
+#: Header that carries the key on the Anthropic style (the OpenAI style always sends Bearer).
+LLMAuthMode = Literal["x-api-key", "bearer"]
 
 #: API style used when ``llm_api_style`` is not set.
 DEFAULT_LLM_API_STYLE: dict[str, LLMApiStyle] = {
@@ -128,6 +130,12 @@ class Settings(BaseSettings):
     openai_compatible_model: str = ""
     openai_compatible_api_key: str = ""
     llm_max_tokens: int = 8192
+    #: Anthropic style only: ``x-api-key`` (default; Sandstone/LiteLLM, LM Studio, Ollama) or
+    #: ``bearer`` (``Authorization: Bearer``; a vLLM started with ``--api-key``).
+    llm_auth_mode: LLMAuthMode = "x-api-key"
+    #: ``reasoning_effort`` sent with every LLM call when set (e.g. ``low``, ``medium``,
+    #: ``high``); unset sends nothing. Free string: the gateway or server decides what it accepts.
+    llm_reasoning_effort: str | None = None
     llm_api_key: str = Field(
         default="local",
         validation_alias=AliasChoices("LMSTUDIO_API_KEY", "DATASET_AGENT_LLM_API_KEY"),
@@ -226,6 +234,11 @@ class Settings(BaseSettings):
 
     #: FP rate % threshold that triggers refinement in the optimization loop.
     optimize_fp_threshold_pct: float = Field(default=10.0, ge=0.0, le=100.0)
+    #: Excludes guard: when V4 keeps less than ``1 - this`` of V3's results, each exclude
+    #: is measured against V3. 1.0 disables the guard.
+    optimize_exclude_max_total_share: float = Field(default=0.5, ge=0.0, le=1.0)
+    #: An exclude that removes more than this share of V3's results is dropped.
+    optimize_exclude_max_term_share: float = Field(default=0.10, ge=0.0, le=1.0)
     #: Max optimization loop iterations (build DSL → gate → refine).
     optimize_max_iterations: int = Field(default=2, ge=1, le=10)
 
@@ -539,6 +552,15 @@ class Settings(BaseSettings):
         """``DATASET_AGENT_LLM_API_STYLE=`` (empty) means "use the provider default"."""
         if isinstance(v, str) and not v.strip():
             return None
+        return v
+
+    @field_validator("llm_reasoning_effort", mode="before")
+    @classmethod
+    def _empty_reasoning_effort_is_unset(cls, v: object) -> object:
+        """Empty means unset; the value is stripped and lowercased."""
+        if isinstance(v, str):
+            v = v.strip().lower()
+            return v or None
         return v
 
     @field_validator("fp_sample_size")

@@ -52,7 +52,14 @@ class AnthropicAgent(AgentPort):
         thinking_budget: int = 0,
         top_p: float | None = None,
         top_k: int | None = None,
+        auth_mode: str = "x-api-key",
+        reasoning_effort: str | None = None,
     ):
+        if auth_mode not in ("x-api-key", "bearer"):
+            raise ValueError(f"auth_mode must be 'x-api-key' or 'bearer', got {auth_mode!r}")
+        #: ``x-api-key`` (the SDK default) or ``bearer`` (``Authorization: Bearer``, for
+        #: servers such as a vLLM started with ``--api-key``).
+        self._auth_mode = auth_mode
         self._model_name = model_name
         self._base_url = base_url.rstrip("/")
         self._temperature = temperature
@@ -67,6 +74,7 @@ class AnthropicAgent(AgentPort):
         self._thinking_budget = max(0, int(thinking_budget))
         self._top_p = top_p
         self._top_k = top_k
+        self._reasoning_effort = reasoning_effort
         self._client: Anthropic | None = None
         #: Number of ``get_structured`` calls that got no schema-valid tool call
         #: (the result was a coerced near-miss or ``{}``).
@@ -86,8 +94,13 @@ class AnthropicAgent(AgentPort):
                 extra["http_client"] = self._http_client
             if self._max_retries is not None:
                 extra["max_retries"] = self._max_retries
+            auth = (
+                {"auth_token": self._api_key}
+                if self._auth_mode == "bearer"
+                else {"api_key": self._api_key}
+            )
             self._client = Anthropic(
-                api_key=self._api_key,
+                **auth,
                 base_url=self._base_url,
                 timeout=float(self._timeout_seconds),
                 **extra,
@@ -106,6 +119,9 @@ class AnthropicAgent(AgentPort):
             body["top_p"] = self._top_p
         if self._top_k is not None:
             body["top_k"] = self._top_k
+        if self._reasoning_effort:
+            # Gateway extension (LiteLLM, vLLM), not a native Anthropic Messages field.
+            body["reasoning_effort"] = self._reasoning_effort
         return body
 
     # ------------------------------------------------------------------
